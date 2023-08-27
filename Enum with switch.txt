@@ -1,0 +1,73 @@
+package com.pdl.bussys.ostservice.service;
+
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.pdl.bussys.ostservice.config.OrderWebClientPropertiesConfig;
+import com.pdl.bussys.ostservice.constant.Brand;
+import com.pdl.bussys.ostservice.constant.OrderSystem;
+import com.pdl.bussys.ostservice.exception.JsonProcessException;
+
+import lombok.NonNull;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Service;
+
+import java.util.Locale;
+
+import static com.pdl.bussys.ostservice.util.ServiceBuildUtil.getObjectMapper;
+
+@Service
+@RequiredArgsConstructor
+@Slf4j
+public class OrderUtilService {
+
+    @NonNull OrderWebClientPropertiesConfig orderWsClientPropertiesConfig;
+
+    public String getOrderBaseUrlByBrandAndSystem(String brandId, OrderSystem orderSystem) {
+        return switch (orderSystem) {
+            case NEWTON -> getNewtonSystemBaseURl(Brand.valueOf(brandId.toUpperCase(Locale.ENGLISH)));
+            case SPECTRUM -> getSpectrumSystemBaseURL(Brand.valueOf(brandId.toUpperCase(Locale.ENGLISH)));
+            default -> "";
+        };
+    }
+
+    public String getNewtonSystemBaseURl(Brand brandId) {
+        return switch (brandId) {
+            case STSH -> orderWsClientPropertiesConfig.getWebClient().getNewton().getBaseUrl().getStsh();
+            case FDLN -> orderWsClientPropertiesConfig.getWebClient().getNewton().getBaseUrl().getFdln();
+            case GNTC -> orderWsClientPropertiesConfig.getWebClient().getNewton().getBaseUrl().getGntc();
+            case MRTN -> orderWsClientPropertiesConfig.getWebClient().getNewton().getBaseUrl().getMrtn();
+            case GNTL -> orderWsClientPropertiesConfig.getWebClient().getNewton().getBaseUrl().getGntl();
+            case HNFD -> orderWsClientPropertiesConfig.getWebClient().getNewton().getBaseUrl().getHnfd();
+            default -> "";
+        };
+    }
+
+    public String getSpectrumSystemBaseURL(Brand brandId) {
+        return switch (brandId) {
+            case STSH -> orderWsClientPropertiesConfig.getWebClient().getSpectrum().getBaseUrl().getStsh();
+            case FDLN -> orderWsClientPropertiesConfig.getWebClient().getSpectrum().getBaseUrl().getFdln();
+            case GNTC -> orderWsClientPropertiesConfig.getWebClient().getSpectrum().getBaseUrl().getGntc();
+            case MRTN -> orderWsClientPropertiesConfig.getWebClient().getSpectrum().getBaseUrl().getMrtn();
+            case GNTL -> orderWsClientPropertiesConfig.getWebClient().getSpectrum().getBaseUrl().getGntl();
+            case HNFD -> orderWsClientPropertiesConfig.getWebClient().getSpectrum().getBaseUrl().getHnfd();
+            default -> "";
+        };
+    }
+
+    public int getOrderServiceWebClientConnectionTimoutMillis() {
+        return orderWsClientPropertiesConfig.getWebClient().getConnectionTimoutMillis();
+    }
+
+    public int getOrderServiceWebClientReadTimeoutMillis() {
+        return orderWsClientPropertiesConfig.getWebClient().getReadTimeoutMillis();
+    }
+
+    public String convertSpectrumJsonResponseToString(SpectrumOrderResponseDto spectrumOrderResponseDto)  {
+        try {
+            return getObjectMapper().writeValueAsString(spectrumOrderResponseDto.getData());
+        } catch (JsonProcessingException ex) {
+            log.error("convertSpectrumJsonResponseToString: JsonProcessingException:", ex);
+            throw new JsonProcessException("Issue during prepare string from spectrumOrderResponseDto:" + ex.getMessage(), ex);
+        }
+    }
+}

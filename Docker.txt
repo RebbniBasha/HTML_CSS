@@ -1,0 +1,14 @@
+Docker
+
+https://stackoverflow.com/questions/29480099/whats-the-difference-between-docker-compose-vs-dockerfile
+
+
+https://kubernetes.io/docs/concepts/overview/
+
+https://www.cloudzero.com/blog/kubernetes-node-vs-pod
+
+https://www.theserverside.com/blog/Coffee-Talk-Java-News-Stories-and-Opinions/compare-Kubernetes-kubectl-vs-kubelet-when-to-use
+
+what is use of docker-compose ?
+
+https://www.freecodecamp.org/news/what-is-docker-compose-how-to-use-it/

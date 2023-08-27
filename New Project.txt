@@ -1,0 +1,15 @@
+We don’t have any documentation on frameworks, but you can refer to this repository as a template for all the dev frameworks -  https://github.com/RoyalAholdDelhaize/pdl-fulfillment-cf-access-manager/tree/mainFor development environment -  IDE - IntelliJ, DB visualizer (for informix tables), Datagrip (for postgres). Wiremock (for api stubbing for unit tests), flyway (for DB setup and migrations), emeddedpostgres (for DB testing in Junits)For code standards -
+
+jacoco for test coverage (we maintain a 85% test coverage standard)
+checkstyle (we use the latest google standards as-is)
+PMD for best practices code hygiene checks (in addition to sonarqube)
+java version 17 (this is updated with time as other latest java versions are released and have been stabilized over at least an year)
+
+For CF Equipment Mgmt architecture - We have the two confluence pages I shared with you - Still working on completing them
+
+Hope this helps
+
+
+https://confluence-aholddelhaize.atlassian.net/wiki/spaces/BSAPPS/pages/148325236770/CF+Facilities-+Associate+Management+Work+in+Progress
+
+https://www.figma.com/file/yiV7WPwZuHOrM5WirpshXy/CF---Equipment-Management?type=design&node-id=0-1

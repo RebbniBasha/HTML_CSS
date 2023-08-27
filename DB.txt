@@ -1,0 +1,97 @@
+server:
+  port: 8080
+  shutdown: graceful
+  servlet:
+    context-path: ${spring_application_context_path:/ost-dil}
+
+# Azure Cosmos DB, INFO ENDPOINT, Ignoring Unknown Properties.
+spring:
+  cloud:
+    azure:
+      cosmos:
+        database: ${ost.dil.azure.cosmos.dbname:ost-store-config-db}
+        key: ${ost.dil.azure.cosmos.key:xl19dMvt1noKaZwh4n0gAnCVDwzFBpObUMHike7tWllmw2x67yBqXLj1Gsfy6BObRfP5SF8QoEAhACDbBL3WDg==}
+        endpoint: ${ost.dil.azure.cosmos.uri:https://cosmos-pdlecomspine-dev-01.documents.azure.com:443/}
+  application:
+    name: ost-dil
+    host: ${spring_application_host:http://localhost:8080/{basePath}}
+    base-path: ${spring_application_base_path:ost-dil}
+    version: ${application_version:}
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          jwk-set-uri: https://login.microsoftonline.com/common/discovery/v2.0/keys
+
+#Spring security log enable
+logging:
+  level:
+    org:
+      springframework:
+        security: debug
+
+# Azure Blob
+azure:
+  storage:
+    account:
+      name: ${ost.dil.azure.storage.connection.account.name:sapdlecomspinenonprdcu01}
+      key: ${ost.dil.azure.storage.connection.account.key:ost.dil.azure.storage.connection.account.key:ou2p9L4gCnq0foywy0rMNEqQFzOzmlyxmcnTryD4ypOz/uSuHCKaztpVRFPLzQXguYCJM2tznehK+ASt/8NUjQ==}
+    approved-container:
+      name: ${ost.dil.azure.storage.connection.approved.container:ost-incoming-approved-dev}
+
+# Swagger OpenApi Config
+springdoc:
+  swagger-ui:
+    config-url: ${springdoc_swagger_ui_config_url:/ost-dil/v3/api-docs/swagger-config}
+    url: ${springdoc_swagger_ui_url:/ost-dil/v3/api-docs}
+
+# custom properties
+ost-dil:
+  cache:
+    stores-by-brand:
+      expire-min: 1
+      initial-capacity: 200
+      maximum-size: 500
+    users-by-brand:
+      expire-min: 1
+      initial-capacity: 200
+      maximum-size: 500
+    validate:
+      expire-min: 1
+      initial-capacity: 200
+      maximum-size: 500
+    catalog:
+      expire-min: 0
+      initial-capacity: 200
+      maximum-size: 500
+    stores-in-progress-by-brand:
+      expire-min: 1
+      initial-capacity: 200
+      maximum-size: 500
+    stores-summary-by-brand:
+      expire-min: 1
+      initial-capacity: 200
+      maximum-size: 500
+  service:
+    retry:
+      attempts: 3
+      wait: 1000
+  multi-store-config:
+    count: ${multi_store_config_count:10}
+  etl-admin-user:
+    name: ${etl_admin_user:ETL-0001}
+
+#Actuator Settings
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+      base-path: /api/v1/actuator
+  endpoint:
+    health:
+      show-details: always
+

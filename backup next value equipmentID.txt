@@ -1,0 +1,609 @@
+package com.pdl.fulfillment.cf.equipmentmanagement.dil.repository;
+
+import static com.pdl.fulfillment.cf.equipmentmanagement.dil.util.QueryBuildUtil.EQUIPMENT_CHECK_IN;
+import static com.pdl.fulfillment.cf.equipmentmanagement.dil.util.QueryBuildUtil.EQUIPMENT_STATUS_BY_EQUIPMENT_ID;
+import static com.pdl.fulfillment.cf.equipmentmanagement.dil.util.QueryBuildUtil.EQUIPMENT_SUMMARY;
+import static com.pdl.fulfillment.cf.equipmentmanagement.dil.util.QueryBuildUtil.MIN_EQUIPMENT_ID_BY_TYPE_CODE;
+import static com.pdl.fulfillment.cf.equipmentmanagement.dil.util.QueryBuildUtil.PAGED_EQUIPMENT_SUMMARY_QUERY;
+
+import com.pdl.fulfillment.cf.equipmentmanagement.dil.model.entity.Equipment;
+import com.pdl.fulfillment.cf.equipmentmanagement.dil.repository.projections.EquipmentStatusProjection;
+import com.pdl.fulfillment.cf.equipmentmanagement.dil.repository.projections.EquipmentSummaryProjection;
+import com.pdl.fulfillment.cf.equipmentmanagement.dil.repository.projections.PaginatedEquipmentView;
+import java.time.Instant;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+
+/**
+ * EquipmentRepository for equipment table.
+ */
+@Repository
+public interface EquipmentRepository extends JpaRepository<Equipment, String> {
+
+    @Transactional(propagation = Propagation.REQUIRED, readOnly = true)
+    @Query(value = PAGED_EQUIPMENT_SUMMARY_QUERY)
+    Page<PaginatedEquipmentView>
+    findEquipmentSummaryPage(@Param("equipmentId") String equipmentId,
+                             @Param("status") Set<String> status,
+                             @Param("typeCodes") Set<String> typeCodes,
+                             @Param("vendorIds") Set<String> vendorIds,
+                             @Param("storageLocationIds") Set<String> storageLocationIds,
+                             @Param("serialNumber") String serialNumber,
+                             @Param("phoneIpNumber") String phoneIpNumber,
+                             @Param("macSimAddress") String macSimAddress,
+                             @Param("deploymentDateFrom") Instant deploymentDateFrom,
+                             @Param("deploymentDateTo") Instant deploymentDateTo,
+                             @Param("lastInventoryDateFrom") Instant lastInventoryDateFrom,
+                             @Param("lastInventoryDateTo") Instant lastInventoryDateTo,
+                             @Param("lastLoginDateFrom") Instant lastLoginDateFrom,
+                             @Param("lastLoginDateTo") Instant lastLoginDateTo,
+                             @Param("homeStoreIds") Set<String> homeStoreIds,
+                             @Param("currentStoreIds") Set<String> currentStoreIds,
+                             Pageable pageable
+    );
+
+    @Transactional(propagation = Propagation.REQUIRED, readOnly = true)
+    @Query(value = MIN_EQUIPMENT_ID_BY_TYPE_CODE)
+    List<Integer> findNextEquipmentIdByTypeCode(
+            @Param("equipmentTypeCode") String equipmentTypeCode
+    );
+
+    @Transactional(propagation = Propagation.REQUIRED, readOnly = true)
+    @Query(value = """
+                    SELECT CAST(SUBSTRING(eq.equipmentId, 3, 6) as INTEGER ) 
+                    AS equipmentId
+                    FROM Equipment eq 
+                    WHERE eq.equipmentType.equipmentTypeCode =:equipmentTypeCode
+                    ORDER BY equipmentId ASC 
+                    """)
+    List<Integer> findAllEquipmentIdsByEquipmentTypeCode(
+            @Param("equipmentTypeCode") String equipmentTypeCode
+    );
+
+    @Query(value = EQUIPMENT_SUMMARY)
+    Page<EquipmentSummaryProjection> findEquipmentSummary(
+            @Param("typeIds") Set<String> typeCodes,
+            @Param("status") Set<String> equipmentStatus,
+            @Param("vendorIds") Set<String> vendorIds,
+            @Param("currentStoreIds") Set<String> currentStoreIds,
+            Pageable pageable
+    );
+
+    @Query(value = EQUIPMENT_CHECK_IN)
+    Optional<Equipment> findEquipmentByEquipmentIdOrSerialNumberOrPhoneNumber(
+            @Param("searchId") String searchId);
+
+    @Query(value = EQUIPMENT_STATUS_BY_EQUIPMENT_ID)
+    List<EquipmentStatusProjection> findEquipmentStatusByEquipmentId(@Param("ids") Set<String> ids);
+}
+
+
+
+
+
+package com.pdl.fulfillment.cf.equipmentmanagement.dil.service;
+
+import static com.pdl.fulfillment.cf.equipmentmanagement.dil.constant.EquipmentStatus.CHECKED_IN;
+import static com.pdl.fulfillment.cf.equipmentmanagement.dil.constant.EquipmentStatus.CHECKED_OUT;
+import static com.pdl.fulfillment.cf.equipmentmanagement.dil.constant.EquipmentStatus.DAMAGED;
+import static com.pdl.fulfillment.cf.equipmentmanagement.dil.constant.EquipmentStatus.MISSING;
+import static com.pdl.fulfillment.cf.equipmentmanagement.dil.constant.EquipmentStatus.RETIRED;
+import static com.pdl.fulfillment.cf.equipmentmanagement.dil.constant.EquipmentStatus.TO_ZONE;
+import static com.pdl.fulfillment.cf.equipmentmanagement.dil.util.PaginationUtil.getPageIndex;
+import static com.pdl.fulfillment.cf.equipmentmanagement.dil.util.PaginationUtil.successResponseWithPagination;
+import static org.apache.commons.lang3.ObjectUtils.isNotEmpty;
+
+import com.pdl.fulfillment.cf.equipmentmanagement.dil.constant.EquipmentStatus;
+import com.pdl.fulfillment.cf.equipmentmanagement.dil.exception.AuthorizeForbiddenException;
+import com.pdl.fulfillment.cf.equipmentmanagement.dil.exception.InvalidRequestException;
+import com.pdl.fulfillment.cf.equipmentmanagement.dil.exception.ResourceNotFoundException;
+import com.pdl.fulfillment.cf.equipmentmanagement.dil.mapper.EquipmentMapper;
+import com.pdl.fulfillment.cf.equipmentmanagement.dil.mapper.PageableMapper;
+import com.pdl.fulfillment.cf.equipmentmanagement.dil.model.dto.AddEquipmentRequestDto;
+import com.pdl.fulfillment.cf.equipmentmanagement.dil.model.dto.DeleteEquipmentItem;
+import com.pdl.fulfillment.cf.equipmentmanagement.dil.model.dto.DeleteEquipmentResponseDto;
+import com.pdl.fulfillment.cf.equipmentmanagement.dil.model.dto.EquipmentCheckInResponseDto;
+import com.pdl.fulfillment.cf.equipmentmanagement.dil.model.dto.EquipmentDto;
+import com.pdl.fulfillment.cf.equipmentmanagement.dil.model.dto.EquipmentIdDto;
+import com.pdl.fulfillment.cf.equipmentmanagement.dil.model.dto.EquipmentResponseDto;
+import com.pdl.fulfillment.cf.equipmentmanagement.dil.model.dto.EquipmentSummaryDto;
+import com.pdl.fulfillment.cf.equipmentmanagement.dil.model.dto.PagedDto;
+import com.pdl.fulfillment.cf.equipmentmanagement.dil.model.dto.UserProfile;
+import com.pdl.fulfillment.cf.equipmentmanagement.dil.model.entity.Equipment;
+import com.pdl.fulfillment.cf.equipmentmanagement.dil.model.entity.EquipmentType;
+import com.pdl.fulfillment.cf.equipmentmanagement.dil.repository.EquipmentRepository;
+import com.pdl.fulfillment.cf.equipmentmanagement.dil.repository.projections.EquipmentStatusProjection;
+import com.pdl.fulfillment.cf.equipmentmanagement.dil.repository.projections.EquipmentSummaryProjection;
+import com.pdl.fulfillment.cf.equipmentmanagement.dil.repository.projections.PaginatedEquipmentView;
+import com.pdl.fulfillment.cf.equipmentmanagement.dil.util.DateUtils;
+import edu.umd.cs.findbugs.annotations.SuppressFBWarnings;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+import java.util.Set;
+import java.util.stream.IntStream;
+import lombok.NonNull;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
+
+/**
+ * EquipmentService.
+ */
+@Service
+@RequiredArgsConstructor
+@Slf4j
+@SuppressFBWarnings
+@SuppressWarnings({"PMD.AvoidLiteralsInIfCondition", "PMD.DataflowAnomalyAnalysis"})
+public class EquipmentService {
+
+    private static final String DEFAULT_FOUR_DIGIT_EQUIPMENT_ID = "0001";
+    @NonNull
+    private final EquipmentRepository equipmentRepository;
+
+    @NonNull
+    private final EquipmentStatusService equipmentStatusService;
+
+    @NonNull
+    private final EquipmentTypeService equipmentTypeService;
+
+    @NonNull
+    private final EquipmentVendorService equipmentVendorService;
+
+    @NonNull
+    private final PageableMapper pageableMapper;
+
+    @NonNull
+    private final EquipmentMapper equipmentMapper;
+
+    @NonNull
+    private final UserProfile userProfile;
+
+    @NonNull
+    private final EquipmentActivityService equipmentActivityService;
+
+    /**
+     * This method to Retrieve the EquipmentPage.
+     *
+     * @param equipmentId           equipmentId
+     * @param status                equipmentStatus
+     * @param typeCodes             equipmentTypeCodes
+     * @param vendorIds             vendorIds
+     * @param storageLocationIds    storageLocationIds
+     * @param serialNumber          serialNumber
+     * @param phoneIpNumber         phoneIpNumber
+     * @param macSimAddress         macSimAddress
+     * @param deploymentDateFrom    deploymentDateFrom
+     * @param deploymentDateTo      deploymentDateTo
+     * @param lastInventoryDateFrom lastInventoryDateFrom
+     * @param lastInventoryDateTo   lastInventoryDateTo
+     * @param homeStoreIds          homeStoreIds
+     * @param currentStoreIds       currentStoreIds
+     * @param page                  page
+     * @param pageSize              pageSize
+     * @return PagedDto&lt;EquipmentDto$gt;
+     */
+    public PagedDto<EquipmentDto>
+    findEquipmentSummaryPage(String equipmentId, Set<String> status, Set<String> typeCodes,
+                             Set<String> vendorIds, Set<String> storageLocationIds,
+                             String serialNumber, String phoneIpNumber, String macSimAddress,
+                             LocalDate deploymentDateFrom, LocalDate deploymentDateTo,
+                             LocalDate lastInventoryDateFrom, LocalDate lastInventoryDateTo,
+                             LocalDate lastLoginDateFrom, LocalDate lastLoginDateTo,
+                             Set<String> homeStoreIds, Set<String> currentStoreIds,
+                             Integer page, Integer pageSize
+    ) {
+        log.info("EquipmentService:findEquipmentSummaryPage");
+        if (!EquipmentStatus.hasEquipmentStatus(status)) {
+            throw new InvalidRequestException("Invalid Equipment status.");
+        }
+        if (isNotEmpty(homeStoreIds) && !userProfile.hasStoreId(homeStoreIds)) {
+            throw new InvalidRequestException("Invalid HomeStoreIds");
+        }
+        if (!userProfile.hasStoreId(currentStoreIds)) {
+            throw new InvalidRequestException("Invalid CurrentStoreIds");
+        }
+
+        //validate deploymentDate
+        if (DateUtils.isFromDateNull(deploymentDateFrom, deploymentDateTo)) {
+            throw new InvalidRequestException("deployment fromDate is mandatory.");
+        }
+        if (DateUtils.isToDateNull(deploymentDateFrom, deploymentDateTo)) {
+            throw new InvalidRequestException("deployment toDate is mandatory.");
+        }
+        if (DateUtils.isFromDateAfterToDate(deploymentDateFrom, deploymentDateTo)) {
+            throw new InvalidRequestException("deployment fromDate should not be after toDate.");
+        }
+        deploymentDateTo = DateUtils.adjustDateIfEqual(deploymentDateFrom, deploymentDateTo);
+        log.info("1: {}, 2: {}", deploymentDateFrom, deploymentDateTo);
+        //validate inventoryDate
+        if (DateUtils.isFromDateNull(lastInventoryDateFrom, lastInventoryDateTo)) {
+            throw new InvalidRequestException("lastInventory fromDate is mandatory.");
+        }
+        if (DateUtils.isToDateNull(lastInventoryDateFrom, lastInventoryDateTo)) {
+            throw new InvalidRequestException("lastInventory toDate is mandatory.");
+        }
+        if (DateUtils.isFromDateAfterToDate(lastInventoryDateFrom, lastInventoryDateTo)) {
+            throw new InvalidRequestException("lastInventory fromDate should not be after toDate.");
+        }
+        lastInventoryDateTo =
+                DateUtils.adjustDateIfEqual(lastInventoryDateFrom, lastInventoryDateTo);
+
+        //validate lastLoginDate
+        if (DateUtils.isFromDateNull(lastLoginDateFrom, lastLoginDateTo)) {
+            throw new InvalidRequestException("lastLogin fromDate is mandatory.");
+        }
+        if (DateUtils.isToDateNull(lastLoginDateFrom, lastLoginDateTo)) {
+            throw new InvalidRequestException("lastLogin toDate is mandatory.");
+        }
+        if (DateUtils.isFromDateAfterToDate(lastLoginDateFrom, lastLoginDateTo)) {
+            throw new InvalidRequestException("lastLogin fromDate should not be after toDate.");
+        }
+        lastLoginDateTo = DateUtils.adjustDateIfEqual(lastLoginDateFrom, lastLoginDateTo);
+
+        Integer offset = getPageIndex(page);
+        log.info("EquipmentService: getEquipmentPage: offset: {}, limit: {}",
+                offset, pageSize);
+        Pageable equipmentPageRequest = PageRequest.of(offset, pageSize);
+        Page<PaginatedEquipmentView> equipmentPage =
+                equipmentRepository.findEquipmentSummaryPage(
+                        equipmentId, status, typeCodes, vendorIds,
+                        storageLocationIds, serialNumber, phoneIpNumber, macSimAddress,
+                        DateUtils.toInstant(deploymentDateFrom),
+                        DateUtils.toInstant(deploymentDateTo),
+                        DateUtils.toInstant(lastInventoryDateFrom),
+                        DateUtils.toInstant(lastInventoryDateTo),
+                        DateUtils.toInstant(lastLoginDateFrom),
+                        DateUtils.toInstant(lastLoginDateTo),
+                        homeStoreIds, currentStoreIds,
+                        equipmentPageRequest
+                );
+        return successResponseWithPagination(
+                equipmentMapper.pagedEquipmentListToEquipmentDtoList(equipmentPage.getContent()),
+                pageableMapper.toPageDto(equipmentPage, page));
+    }
+
+    /**
+     * Returns complete equipment details by EquipmentID.
+     *
+     * @param equipmentId ID of the equipment.
+     * @return EquipmentResponseDto.
+     * @throws ResourceNotFoundException Throws if no equipment with given ID is found.
+     */
+    public EquipmentResponseDto findEquipment(String equipmentId) {
+        Equipment equipment = equipmentRepository.findById(equipmentId)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Equipment not found with id: " + equipmentId));
+        log.info("Equipment with id: ".concat(equipmentId).concat(" found."));
+        return equipmentMapper.toEquipmentResponseDto(equipment);
+    }
+
+    /**
+     * Add new Equipment.
+     * Validations all request details
+     *
+     * @param addEquipmentRequestDto request details to add Equipment.
+     * @return Response of added equipment
+     */
+    @Transactional
+    public EquipmentResponseDto addEquipment(AddEquipmentRequestDto addEquipmentRequestDto) {
+        log.info("EquipmentService: addEquipment");
+        equipmentTypeService.findEquipmentTypeByTypeCode(
+                addEquipmentRequestDto.getEquipmentTypeCode());
+
+        validEquipmentIdExist(addEquipmentRequestDto.getEquipmentId(),
+                addEquipmentRequestDto.getEquipmentTypeCode());
+
+        validEquipmentTypeCodeDetails(addEquipmentRequestDto);
+
+        equipmentVendorService.findVendorById(addEquipmentRequestDto.getVendorId());
+
+        if (!userProfile.hasStoreId(Set.of(addEquipmentRequestDto.getHomeStoreId()))) {
+            throw new InvalidRequestException("Invalid HomeStoreId");
+        }
+
+        if (!userProfile.hasStoreId(Set.of(addEquipmentRequestDto.getCurrentStoreId()))) {
+            throw new InvalidRequestException("Invalid CurrentStoreId");
+        }
+
+        boolean isToday = DateUtils.isToday(addEquipmentRequestDto.getDeploymentDate());
+        log.info("EquipmentService: addEquipment: isToday: {}", isToday);
+        if (!isToday) {
+            throw new InvalidRequestException("Deployment date should be today");
+        }
+        //Equipment Save
+        Equipment equipment = equipmentMapper.toEquipment(addEquipmentRequestDto);
+        equipment.setEquipmentStatus(equipmentStatusService
+                .findByEquipmentStatusName(CHECKED_IN.getName()));
+        equipment.setHomeStoreName("homeStoreName");
+        equipment.setCurrentStoreName("currentStoreName");
+        equipment.setCreatedByName(userProfile.getUserName());
+        equipment.setEquipmentType(equipmentTypeService
+                .findEquipmentTypeByTypeCode(addEquipmentRequestDto.getEquipmentTypeCode()));
+        equipment.setVendor(equipmentVendorService
+                .findVendorById(addEquipmentRequestDto.getVendorId()));
+        var equipmentResponse = equipmentRepository.save(equipment);
+        //ActivityRecord save
+        equipmentActivityService.createActivityRecord(equipmentResponse);
+        return equipmentMapper.toEquipmentResponseDto(equipmentResponse);
+    }
+
+    void validEquipmentTypeCodeDetails(AddEquipmentRequestDto equipmentRequestDto) {
+        log.info("EquipmentService: validEquipmentTypeCodeDetails");
+        EquipmentType equipmentType =
+                equipmentTypeService
+                        .findEquipmentTypeByTypeCode(equipmentRequestDto.getEquipmentTypeCode());
+        boolean isPhoneIpRequired = equipmentType.getPhoneIpRequired();
+        if (isPhoneIpRequired && StringUtils.isBlank(equipmentRequestDto.getPhoneIpNumber())) {
+            log.info("EquipmentService: validEquipmentTypeCodeDetails: "
+                    + "isPhoneIpRequired: true");
+            throw new InvalidRequestException(
+                    String.format("PhoneIp required for equipmentTypeCode: %s",
+                            equipmentRequestDto.getEquipmentTypeCode()));
+        }
+
+        boolean isMacSimAddressRequired = equipmentType.getMacSimAddressRequired();
+        if (isMacSimAddressRequired
+                && StringUtils.isBlank(equipmentRequestDto.getPhoneIpNumber())) {
+            log.info("EquipmentService: validEquipmentTypeCodeDetails: "
+                    + "isMacSimAddressRequired: true");
+            throw new InvalidRequestException(
+                    "MacSimAddress required for equipmentTypeCode: "
+                            + equipmentRequestDto.getEquipmentTypeCode());
+        }
+
+        boolean isSerialNumberRequired = equipmentType.getSerialNumberRequired();
+        if (isSerialNumberRequired
+                && StringUtils.isBlank(equipmentRequestDto.getPhoneIpNumber())) {
+            log.info("EquipmentService: validEquipmentTypeCodeDetails: "
+                    + "isSerialNumberRequired: true");
+            throw new InvalidRequestException(
+                    "SerialNumber required for equipmentTypeCode: "
+                            + equipmentRequestDto.getEquipmentTypeCode());
+        }
+    }
+
+    void validEquipmentIdExist(String equipmentId, String equipmentTypeCode) {
+        log.info("EquipmentService: validEquipmentIdExist");
+        boolean idStartWithCode = equipmentId.startsWith(equipmentTypeCode);
+        log.info("EquipmentService: validEquipmentIdExist: equipmentIdStartWithCode: {}",
+                idStartWithCode);
+        if (!idStartWithCode) {
+            throw new InvalidRequestException(
+                    "Invalid equipmentTypeId must start with equipmentTypeCode:"
+                            + equipmentTypeCode
+            );
+        }
+        Optional<Equipment> optionalEquipment =
+                equipmentRepository.findById(equipmentId);
+        if (optionalEquipment.isPresent()) {
+            log.info("EquipmentService: validEquipmentIdExist: true");
+            throw new InvalidRequestException(
+                    String.format("Equipment ID %s is already used.", equipmentId));
+        }
+    }
+
+    /**
+     * Get Max of EquipmentId By TypeCode.
+     *
+     * @param equipmentTypeCode equipmentTypeCode
+     * @return nextValue EquipmentId
+     */
+    public EquipmentIdDto findNextLowestAvailableIdByTypeCode(String equipmentTypeCode) {
+        log.info("EquipmentService: findNextLowestAvailableIdByTypeCode");
+        equipmentTypeService.findEquipmentTypeByTypeCode(equipmentTypeCode);
+        List<Integer> listEquipmentIds =
+                equipmentRepository.findAllEquipmentIdsByEquipmentTypeCode(equipmentTypeCode);
+        //List<Integer> listSeqMinValue = equipmentRepository
+        //.findNextEquipmentIdByTypeCode(equipmentTypeCode);
+        int seqMinValue = nextLowestAvailableId(listEquipmentIds);
+        //Integer seqMinValue = listSeqMinValue.stream().findFirst().orElse(null);
+        log.info("EquipmentService: nextEquipmentIdByTypeCode: seqMinValue: {} ", seqMinValue);
+        String nextValue = buildNextEquipmentId(seqMinValue);
+        log.info("EquipmentService: nextEquipmentIdByTypeCode: nextValue: {} ", nextValue);
+        String equipmentId = equipmentTypeCode.concat(nextValue);
+        log.info("EquipmentService: nextEquipmentIdByTypeCode: equipmentId: {} ", equipmentId);
+        return EquipmentIdDto.builder().equipmentId(equipmentId).build();
+    }
+
+    String buildNextEquipmentId(Integer minValueInt) {
+        if (String.valueOf(minValueInt).length() < 4) {
+            return String.format("%04d", minValueInt);
+        }
+        return String.valueOf(minValueInt);
+    }
+
+    int nextLowestAvailableId(List<Integer> equipmentIds) {
+        if (!equipmentIds.isEmpty()) {
+            var equipmentIdsArray = equipmentIds.toArray(new Integer[0]);
+            var equipmentIdsArrayCopy = new int[equipmentIds.get(equipmentIds.size() - 1) + 2];
+            for (int iter : equipmentIdsArray) {
+                equipmentIdsArrayCopy[iter] = 1;
+            }
+            return IntStream.range(1, equipmentIdsArrayCopy.length)
+                    .filter(i -> equipmentIdsArrayCopy[i] == 0)
+                    .findFirst().orElse(0);
+        }
+        return 1;
+    }
+
+    /**
+     * Generates Equipment summary report.
+     * Returns a summary report with count of equipment grouped by equipment type and status.
+     *
+     * @param equipmentStatus Set of Equipment statuses.
+     * @param currentStoreIds Set of current store Ids.
+     * @param page            Page number.
+     * @param pageSize        Size of the page.
+     * @return Equipment summary report.
+     */
+    public PagedDto<EquipmentSummaryDto> findEquipmentSummary(
+            Set<String> typeCodes, Set<String> equipmentStatus,
+            Set<String> vendorIds, Set<String> currentStoreIds,
+            Integer page, Integer pageSize) {
+        log.info("EquipmentService..findEquipmentSummary..!");
+        if (currentStoreIds != null && !userProfile.hasStoreId(currentStoreIds)) {
+            throw new AuthorizeForbiddenException("Invalid current store IDs.");
+        }
+        if (equipmentStatus != null && !EquipmentStatus.hasEquipmentStatus(equipmentStatus)) {
+            throw new InvalidRequestException("Invalid Equipment status list");
+        }
+        Integer offset = getPageIndex(page);
+        Pageable summaryPageRequest = PageRequest.of(offset, pageSize);
+        log.info(
+                "Getting summaries for Equipments with status: {}, "
+                        + "TypeCode: {}, vendorIds: {}, currentFacility: {}",
+                equipmentStatus, typeCodes, vendorIds, currentStoreIds);
+        Page<EquipmentSummaryProjection> equipmentSummaryProjectionsPage =
+                equipmentRepository.findEquipmentSummary(typeCodes, equipmentStatus, vendorIds,
+                        currentStoreIds, summaryPageRequest);
+        if (!equipmentSummaryProjectionsPage.getContent().isEmpty()) {
+            log.info("Found {} Equipment summaries.", equipmentSummaryProjectionsPage.getSize());
+            return successResponseWithPagination(equipmentMapper
+                            .toEquipmentSummaryDto(equipmentSummaryProjectionsPage
+                                    .getContent()),
+                    pageableMapper.toPageDto(equipmentSummaryProjectionsPage, page));
+        } else {
+            throw new ResourceNotFoundException("Equipment summary is not available..!");
+        }
+    }
+
+
+    /**
+     * Deletes Equipment in batch by Equipment ID.
+     * Cannot delete Equipment with status as Checked_Out.
+     *
+     * @param equipmentIds Id of Equipments to delete.
+     * @return DeleteEquipmentResponseDto.
+     * @see DeleteEquipmentItem
+     * @see DeleteEquipmentResponseDto
+     */
+    @Transactional(propagation = Propagation.REQUIRED)
+    @Modifying
+    public DeleteEquipmentResponseDto deleteEquipments(Set<String> equipmentIds) {
+        List<EquipmentStatusProjection> equipmentStatusProjections =
+                equipmentRepository.findEquipmentStatusByEquipmentId(equipmentIds);
+        List<String> idsToDelete = new ArrayList<>();
+
+        List<DeleteEquipmentItem> deleteEquipmentItems = new ArrayList<>();
+        equipmentStatusProjections.parallelStream()
+                .forEach(e -> {
+                    equipmentIds.remove(e.getEquipmentId());
+                    DeleteEquipmentItem item =
+                            buildDeleteEquipmentItem(e.getEquipmentId(),
+                                    e.getEquipmentStatus());
+                    if (item.isDeleted()) {
+                        idsToDelete.add(item.getId());
+                    }
+                    deleteEquipmentItems.add(item);
+                });
+        equipmentIds.forEach(e -> deleteEquipmentItems.add(buildDeleteEquipmentItem(e,
+                null)));
+        equipmentRepository.deleteAllByIdInBatch(idsToDelete);
+
+        log.info("Deleted {} Equipment successfully", idsToDelete.size());
+        log.info("Cannot process {} Equipment due to invalid status",
+                deleteEquipmentItems.size() - idsToDelete.size() - equipmentIds.size());
+        log.info("{} Equipment not found", equipmentIds.size());
+        return DeleteEquipmentResponseDto.builder().items(deleteEquipmentItems).build();
+    }
+
+    /**
+     * Builds DeleteEquipmentItem based on EquipmentStatus.
+     * Use status as null, If equipment not found in DB.
+     *
+     * @param id     ID of the Equipment.
+     * @param status Status of the Equipment
+     * @return DeleteEquipmentItem.
+     * @see DeleteEquipmentItem
+     */
+    private DeleteEquipmentItem buildDeleteEquipmentItem(String id, String status) {
+        if (status == null) {
+            return DeleteEquipmentItem.builder().id(id).deleted(false).message(String.format(
+                    "Equipment(%s) not found", id)).build();
+        } else if (status.equals(CHECKED_OUT.getName())) {
+            return DeleteEquipmentItem.builder().id(id).deleted(false)
+                    .message(String.format("Cannot delete Equipment(%s) with status: %s", id,
+                            status)).build();
+        } else {
+            return DeleteEquipmentItem.builder().id(id).deleted(true).build();
+        }
+    }
+
+    /**
+     * This method to perform equipment check in operation.
+     *
+     * @return EquipmentCheckInDto
+     */
+    public EquipmentCheckInResponseDto performCheckIn(String searchId) {
+        log.info("EquipmentCheckInService - performCheckIn");
+
+        /* Validation for EquipmentId/Serial Number/IP or Phone Number is resides
+           in Equipment DB or not. */
+        Equipment equipment =
+                equipmentRepository.findEquipmentByEquipmentIdOrSerialNumberOrPhoneNumber(searchId)
+                        .orElseThrow(() -> new ResourceNotFoundException(
+                                "Equipment not found with : " + searchId));
+        // Validation for editing user has access to current facility or not.
+        if (!userProfile.hasStoreId(Set.of(equipment.getCurrentStoreId()))) {
+            throw new AuthorizeForbiddenException("User does not have access to Current Facility.");
+        }
+        String equipmentStatusName = equipment.getEquipmentStatus().getEquipmentStatusName();
+        log.info("Status of Equipment({}) before check-in: {}", equipment.getEquipmentId(),
+                equipmentStatusName);
+        // Validation for equipment status which we are fetching from DB.
+        if (!hasValidStatusToCheckInEquipment(equipmentStatusName)) {
+            throw new InvalidRequestException(String.format("Cannot check-in Equipment(%s) with "
+                    + "status: %s", equipment.getEquipmentId(), equipmentStatusName));
+        }
+        // Updating the Equipment table and Inserting the entry into Activity table.
+        return updateEquipmentStatus(equipment, CHECKED_IN.getName());
+
+    }
+
+    private boolean hasValidStatusToCheckInEquipment(String status) {
+        List<String> equipmentStatus = List.of(TO_ZONE.getName(),
+                CHECKED_OUT.getName(),
+                DAMAGED.getName(),
+                RETIRED.getName(),
+                MISSING.getName());
+        return equipmentStatus.stream().anyMatch(eq -> eq.contains(status));
+    }
+
+    /**
+     * Updates EquipmentStatus for a Equipment.
+     *
+     * @param equipment           Equipment for which status needs to be updated.
+     * @param equipmentStatusName Valid Equipment status name
+     * @return EquipmentCheckInResponseDto.
+     * @see EquipmentCheckInResponseDto
+     * @see EquipmentStatus
+     */
+    public EquipmentCheckInResponseDto updateEquipmentStatus(Equipment equipment,
+                                                             String equipmentStatusName) {
+        equipment.setEquipmentStatus(
+                equipmentStatusService.findByEquipmentStatusName(equipmentStatusName));
+        Equipment savedEquipment = equipmentRepository.save(equipment);
+        equipmentActivityService.createActivityRecord(savedEquipment);
+        log.info("Equipment({}) status updated to: {}", equipment.getEquipmentId(),
+                equipmentStatusName);
+        return new EquipmentCheckInResponseDto(savedEquipment.getEquipmentId());
+    }
+}
